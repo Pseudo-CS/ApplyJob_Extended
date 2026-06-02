@@ -8,7 +8,8 @@ resume.pdf
 
 # Runtime artifacts
 *.db
-tailored_resumes/
+*.log
+tailor_resumes/
 cover_letters/
 chrome-workers/
 apply-workers/

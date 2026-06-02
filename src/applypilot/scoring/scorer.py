@@ -36,6 +36,12 @@ IMPORTANT FACTORS:
 - Factor in the candidate's project experience
 - Be realistic about experience level vs. job requirements (years of experience, seniority)
 
+EXPERIENCE LEVEL CONSTRAINTS (STRICT):
+- Compare the candidate's years of experience on their resume with the job requirements.
+- If a job requires 5+ years of experience (Senior) and the candidate has less than 3 years of experience, the score MUST NOT exceed 6.
+- If a job requires 7+ or 8+ years of experience (Lead/Staff/Principal) and the candidate has 1-2 years of experience, the score MUST NOT exceed 5.
+- Do not let strong technical skills override these seniority constraints; a junior candidate is a poor fit for a highly senior role.
+
 RESPOND IN EXACTLY THIS FORMAT (no other text):
 SCORE: [1-10]
 KEYWORDS: [comma-separated ATS keywords from the job description that match or could match the candidate]
