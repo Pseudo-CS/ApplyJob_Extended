@@ -1,83 +1,37 @@
 # ApplyPilot (Enhanced Version)
 
-**An autonomous job application pipeline that discovers, scores, tailors, and auto-submits applications for you.**
-
-This repository is an enhanced fork of the original open-source [ApplyPilot](https://github.com/Pickle-Pixel/ApplyPilot) project. It introduces several major stability, UI/UX, and architectural upgrades that make manual and autonomous job hunting more reliable, rate-limit friendly, and visually stunning.
+This repository is an enhanced, optimized fork of the initial open-source [ApplyPilot](https://github.com/Pickle-Pixel/ApplyPilot) project. It adds web-based orchestration, safe multi-profile management, persistent rejection tracking, local LLM support, and a semi-automatic form-filling browser userscript.
 
 ---
 
-## ⚡ What is ApplyPilot?
+## 🌟 Upgrades Compared to the Original Project
 
-ApplyPilot is a 6-stage autonomous job application agent:
-1. **Discover**: Scrapes 5+ job boards (Indeed, LinkedIn, Glassdoor, ZipRecruiter, Google Jobs) and 48+ Workday/employer portals.
-2. **Enrich**: Automatically extracts full job descriptions via cascading scraper rules or LLM extraction.
-3. **Score**: Evaluates every job against your resume and profile facts using AI, rating it 1–10.
-4. **Tailor**: Re-writes your resume per job, emphasizing matching skills and experience without fabricating facts.
-5. **Cover Letter**: Generates targeted, custom cover letters for each job.
-6. **Auto-Apply**: Navigates application forms, uploads tailored documents, answers screening questions, and submits.
+*   **Interactive Web Dashboard**: Replaces command-line execution with a visual control panel to upload resumes, switch or create profiles, generate configurations via AI parsing, and monitor pipeline statistics.
+*   **Active Profile Protection**: Intelligently locks the currently active profile and the last remaining profile to prevent accidental deletion and database corruption.
+*   **Persistent Rejection Tracking**: Saves **all evaluated jobs** to a local SQLite database, including those below the threshold score. Subsequent discovery runs check the DB and automatically skip previously evaluated URLs, saving significant API token costs.
+*   **AI Rejection Summary**: Aggregates feedback from rejected postings and uses an LLM to generate an actionable, second-person summary of missing skills and resume gaps.
+*   **Safe Execution Cap**: Restricts manual discovery loops to a default cap of 50 jobs per run to avoid rate limits and runaway API bills.
 
 ---
 
-## 🚀 Key Enhancements (What the Original Didn't Have)
+## 🖥️ Local LLM Support (Discovery & Scoring)
 
-This fork introduces key features and bug fixes that solve major usability bottlenecks in the original codebase:
+ApplyPilot supports running the discovery, details enrichment, and fit scoring stages completely offline and free. You can target any OpenAI-compatible API endpoint (such as a local **Ollama** or **llama.cpp** server) by adding the following to your `~/.applypilot/.env` configuration:
 
-### 🌐 Web-Based Orchestration (Moving Away from CLI Only)
-* **Interactive Web Control**: Upgraded the experience from purely command-line execution (`applypilot run`) to interactive web control directly inside the dashboard UI.
-* **Integrated Interface Elements**: Native browser popups (`alert`/`confirm`) have been completely replaced with custom Toast notifications and asynchronous Modal dialogs styled directly into the theme. This lets you manage profiles, configure runs, and trigger discovery loops without touching the terminal.
-
-### 👥 Safe Profile Deletion & Management
-* **Active Profile Protection**: Fixed a major bug in the original UI where deleting a profile was impossible because the active profile dropdown always selected the active profile (and clicking delete tried to delete the active profile, which the backend blocks).
-* **Profile Deletion Modal**: Added a "Delete Profile" modal that intelligently filters out the active profile, letting you select and delete any of your other profiles securely.
-
-### 💾 Rejection Feedback & Token Savings (Manual Discovery)
-* **Persistent Rejections**: In the original repo, manual discovery dropped rejected jobs (score < min_score) immediately. This fork writes **all evaluated jobs** to the SQLite database, preserving their fit scores and rejection reasoning.
-* **Smart Deduplication**: Since rejected jobs are now saved in the database, subsequent discovery runs skip these URLs. This prevents the LLM from wasting API tokens re-scoring the same positions on subsequent runs.
-* **Detailed Dashboard Labels**: The dashboard now displays all scored jobs. Low-scoring jobs are categorized under `"Low Fit" (3-4)` and `"Poor Match" (1-2)` sections, allowing you to expand cards and inspect the rejection reasons.
-
-### 🤖 AI-Powered Rejection Summary
-* **Feedback Aggregator**: After every manual discovery run, the pipeline automatically selects 10 random rejection reasons and uses the LLM to write an aggregated, actionable summary of your missing skills or gaps (written in the second person).
-* **Profile Integration**: This summary is saved directly inside your profile folder and displayed inside the **Profile Configuration** tab under the *"Rejection Reasons Summary"* card, giving you clear guidance on how to optimize your resume.
-* **Real-time Logging**: Real-time logs now print detailed rejection summaries (`[Rejected] Score=3 | Reason: ...`) so you know exactly why the agent skipped a job during execution.
-
-### ⚙️ Safe Execution Defaults
-* **Evaluation Cap**: Set the default manual discovery cap to **50 jobs** per session. This protects against API rate limits (e.g. Gemini Free Tier's 15 RPM cap) and prevents run-away token costs.
-
----
-
-## 🛠️ Requirements & Installation
-
-1. **Python 3.11+**
-2. **Node.js 18+** (Required for Playwright form auto-filling)
-3. **Gemini API key** (Free tier from Google AI Studio is sufficient)
-4. **Google Chrome**
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/ApplyPilot.git
-cd ApplyPilot
-
-# Set up virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install .
-pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex
-```
-
-### Quick Start
-
-```bash
-applypilot init          # Run the configuration wizard to set up your profile, resume, and API keys
-applypilot doctor        # Verify your environment is set up properly
-applypilot dashboard     # Start the dashboard HTTP server and view progress
+```ini
+LLM_URL=http://localhost:11434/v1    # Your local endpoint URL
+LLM_MODEL=llama3                     # Model tag (Ollama, etc.)
 ```
 
 ---
 
-## 📄 Licensing
+## 🧩 Semi-Automatic Applying (Tampermonkey Userscript)
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**, preserving the copyleft terms of the original ApplyPilot project. For details, see the [LICENSE](LICENSE) file.
+For users who do not have the `claude` CLI installed, or prefer not to grant terminal/browser control to an autonomous agent, ApplyPilot provides a **semi-automatic application extension** via a Tampermonkey userscript ([userscript.js](file:///home/pseudo/ApplyPilot/userscript.js)).
+
+### How it Works:
+1.  **Install the Script**: Load `userscript.js` into a browser script manager (like Tampermonkey).
+2.  **Start the Dashboard**: Launch `applypilot dashboard` to start the local backend server (listening on port `8089`).
+3.  **Navigate & Fill**: Open any job application or Google Form. A floating **"AI Fill"** button will appear in the bottom-right corner.
+4.  **Auto-Populate**: Click the button. The script gathers the page's input fields, sends them to the local server, and utilizes your active profile facts and LLM to fill out the form fields in real-time.
+5.  **Review & Submit**: Review the auto-populated answers manually before clicking submit.
