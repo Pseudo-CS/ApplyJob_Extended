@@ -23,7 +23,6 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 from applypilot import config
-from applypilot.config import DB_PATH
 from applypilot.database import get_connection, init_db, ensure_columns
 from applypilot.llm import get_client
 

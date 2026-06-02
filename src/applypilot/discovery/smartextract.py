@@ -1101,6 +1101,11 @@ def run_smart_extract(
     Returns:
         Dict with stats: total_new, total_existing, passed, total.
     """
+    import os
+    if os.environ.get("SKIP_SMART_EXTRACT", "").lower() == "true":
+        log.info("Smart extract skipped (SKIP_SMART_EXTRACT=true)")
+        return {"total_new": 0, "total_existing": 0, "passed": 0, "total": 0}
+
     search_cfg = config.load_search_config()
     accept_locs, reject_locs = _load_location_filter(search_cfg)
 

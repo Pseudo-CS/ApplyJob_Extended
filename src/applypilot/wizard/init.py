@@ -18,13 +18,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
+from applypilot import config
 from applypilot.config import (
     APP_DIR,
     ENV_PATH,
-    PROFILE_PATH,
-    RESUME_PATH,
-    RESUME_PDF_PATH,
-    SEARCH_CONFIG_PATH,
     ensure_dirs,
 )
 
@@ -53,11 +50,11 @@ def _setup_resume() -> None:
             continue
 
         if suffix == ".txt":
-            shutil.copy2(src, RESUME_PATH)
-            console.print(f"[green]Copied to {RESUME_PATH}[/green]")
+            shutil.copy2(src, config.RESUME_PATH)
+            console.print(f"[green]Copied to {config.RESUME_PATH}[/green]")
         elif suffix == ".pdf":
-            shutil.copy2(src, RESUME_PDF_PATH)
-            console.print(f"[green]Copied to {RESUME_PDF_PATH}[/green]")
+            shutil.copy2(src, config.RESUME_PDF_PATH)
+            console.print(f"[green]Copied to {config.RESUME_PDF_PATH}[/green]")
 
             # Also ask for a plain-text version for LLM consumption
             txt_path_str = Prompt.ask(
@@ -67,8 +64,8 @@ def _setup_resume() -> None:
             if txt_path_str.strip():
                 txt_src = Path(txt_path_str.strip().strip('"').strip("'")).expanduser().resolve()
                 if txt_src.exists():
-                    shutil.copy2(txt_src, RESUME_PATH)
-                    console.print(f"[green]Copied to {RESUME_PATH}[/green]")
+                    shutil.copy2(txt_src, config.RESUME_PATH)
+                    console.print(f"[green]Copied to {config.RESUME_PATH}[/green]")
                 else:
                     console.print("[yellow]File not found, skipping plain-text copy.[/yellow]")
         break
@@ -175,8 +172,8 @@ def _setup_profile() -> dict:
     }
 
     # Save
-    PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
-    console.print(f"\n[green]Profile saved to {PROFILE_PATH}[/green]")
+    config.PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
+    console.print(f"\n[green]Profile saved to {config.PROFILE_PATH}[/green]")
     return profile
 
 
@@ -225,8 +222,8 @@ def _setup_searches() -> None:
         lines.append(f'  - query: "{role}"')
         lines.append(f"    tier: {min(i + 1, 3)}")
 
-    SEARCH_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    console.print(f"[green]Search config saved to {SEARCH_CONFIG_PATH}[/green]")
+    config.SEARCH_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    console.print(f"[green]Search config saved to {config.SEARCH_CONFIG_PATH}[/green]")
 
 
 # ---------------------------------------------------------------------------

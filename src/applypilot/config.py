@@ -2,32 +2,46 @@
 
 import os
 import platform
+import re
 import shutil
 from pathlib import Path
 
 # User data directory — all user-specific files live here
 APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot"))
 
-# Core paths
-DB_PATH = APP_DIR / "applypilot.db"
-PROFILE_PATH = APP_DIR / "profile.json"
-RESUME_PATH = APP_DIR / "resume.txt"
-RESUME_PDF_PATH = APP_DIR / "resume.pdf"
-SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
+# Core paths (shared across profiles)
 ENV_PATH = APP_DIR / ".env"
 
-# Generated output
+# Per-profile data lives under PROFILES_DIR/<name>/
+PROFILES_DIR = APP_DIR / "profiles"
+ACTIVE_PROFILE_FILE = APP_DIR / "active_profile"
+DEFAULT_PROFILE_NAME = "default"
+_PROFILE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$")
+
+# Generated output (shared)
 TAILORED_DIR = APP_DIR / "tailored_resumes"
 COVER_LETTER_DIR = APP_DIR / "cover_letters"
 LOG_DIR = APP_DIR / "logs"
 
-# Chrome worker isolation
+# Chrome worker isolation (shared)
 CHROME_WORKER_DIR = APP_DIR / "chrome-workers"
 APPLY_WORKER_DIR = APP_DIR / "apply-workers"
 
 # Package-shipped config (YAML registries)
 PACKAGE_DIR = Path(__file__).parent
 CONFIG_DIR = PACKAGE_DIR / "config"
+
+# Files belonging to a profile (relative names under PROFILES_DIR/<name>/)
+_PROFILE_FILE_NAMES = ("profile.json", "resume.txt", "resume.pdf", "searches.yaml")
+
+# Per-profile path attributes resolved dynamically via __getattr__
+_PROFILE_PATH_ATTRS = {
+    "PROFILE_PATH": "profile.json",
+    "RESUME_PATH": "resume.txt",
+    "RESUME_PDF_PATH": "resume.pdf",
+    "SEARCH_CONFIG_PATH": "searches.yaml",
+    "DB_PATH": "applypilot.db",
+}
 
 
 def get_chrome_path() -> str:
@@ -86,31 +100,175 @@ def get_chrome_user_data() -> Path:
 
 
 def ensure_dirs():
-    """Create all required directories."""
-    for d in [APP_DIR, TAILORED_DIR, COVER_LETTER_DIR, LOG_DIR, CHROME_WORKER_DIR, APPLY_WORKER_DIR]:
+    """Create all required directories and migrate legacy single-profile layout."""
+    for d in [APP_DIR, TAILORED_DIR, COVER_LETTER_DIR, LOG_DIR, CHROME_WORKER_DIR, APPLY_WORKER_DIR, PROFILES_DIR]:
         d.mkdir(parents=True, exist_ok=True)
+    _maybe_migrate_legacy_profile()
+    # Ensure the default profile directory exists so attribute access never fails
+    (PROFILES_DIR / DEFAULT_PROFILE_NAME).mkdir(parents=True, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Multi-profile support
+# ---------------------------------------------------------------------------
+
+def _validate_profile_name(name: str) -> str:
+    """Return a sanitized profile name or raise ValueError."""
+    name = (name or "").strip()
+    if not _PROFILE_NAME_RE.match(name):
+        raise ValueError(
+            "Profile name must be 1-40 chars, start with a letter or digit, "
+            "and contain only letters, digits, '-' and '_'."
+        )
+    return name
+
+
+def _maybe_migrate_legacy_profile() -> None:
+    """If files exist at APP_DIR root and no profiles dir is populated, move them.
+
+    Handles installs predating multi-profile support. Idempotent.
+    """
+    default_dir = PROFILES_DIR / DEFAULT_PROFILE_NAME
+    legacy_paths = [APP_DIR / fname for fname in _PROFILE_FILE_NAMES]
+    
+    # Also migrate the legacy database file if it exists at root
+    legacy_db = APP_DIR / "applypilot.db"
+    if legacy_db.exists():
+        legacy_paths.append(legacy_db)
+        
+    has_legacy = any(p.exists() for p in legacy_paths)
+    default_populated = any((default_dir / fname).exists() for fname in _PROFILE_FILE_NAMES) or (default_dir / "applypilot.db").exists()
+    if not has_legacy or default_populated:
+        if not ACTIVE_PROFILE_FILE.exists() and default_dir.exists():
+            ACTIVE_PROFILE_FILE.write_text(DEFAULT_PROFILE_NAME, encoding="utf-8")
+        return
+    default_dir.mkdir(parents=True, exist_ok=True)
+    for src in legacy_paths:
+        if src.exists():
+            dst = default_dir / src.name
+            if not dst.exists():
+                shutil.move(str(src), str(dst))
+    if not ACTIVE_PROFILE_FILE.exists():
+        ACTIVE_PROFILE_FILE.write_text(DEFAULT_PROFILE_NAME, encoding="utf-8")
+
+
+def list_profiles() -> list[str]:
+    """Return all profile names (directory names under PROFILES_DIR), sorted."""
+    if not PROFILES_DIR.exists():
+        return []
+    return sorted(p.name for p in PROFILES_DIR.iterdir() if p.is_dir())
+
+
+def get_active_profile_name() -> str:
+    """Return the name of the currently active profile.
+
+    Falls back to DEFAULT_PROFILE_NAME (creating the dir/active file if needed).
+    """
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    if ACTIVE_PROFILE_FILE.exists():
+        name = ACTIVE_PROFILE_FILE.read_text(encoding="utf-8").strip()
+        if name and (PROFILES_DIR / name).is_dir():
+            return name
+    (PROFILES_DIR / DEFAULT_PROFILE_NAME).mkdir(parents=True, exist_ok=True)
+    ACTIVE_PROFILE_FILE.write_text(DEFAULT_PROFILE_NAME, encoding="utf-8")
+    return DEFAULT_PROFILE_NAME
+
+
+def set_active_profile(name: str) -> str:
+    """Switch the active profile. Returns the name on success.
+
+    Raises FileNotFoundError if the profile directory does not exist.
+    """
+    name = _validate_profile_name(name)
+    target = PROFILES_DIR / name
+    if not target.is_dir():
+        raise FileNotFoundError(f"Profile '{name}' not found at {target}")
+    ACTIVE_PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ACTIVE_PROFILE_FILE.write_text(name, encoding="utf-8")
+    return name
+
+
+def profile_dir(name: str | None = None) -> Path:
+    """Return the directory holding files for the given profile (default: active)."""
+    if name is None:
+        name = get_active_profile_name()
+    else:
+        name = _validate_profile_name(name)
+    return PROFILES_DIR / name
+
+
+def create_profile(name: str, clone_from: str | None = None) -> Path:
+    """Create a new empty profile directory. If clone_from is set, copy its files in.
+
+    Raises FileExistsError if the profile already exists.
+    """
+    name = _validate_profile_name(name)
+    target = PROFILES_DIR / name
+    if target.exists():
+        raise FileExistsError(f"Profile '{name}' already exists at {target}")
+    target.mkdir(parents=True, exist_ok=False)
+    if clone_from:
+        src_dir = PROFILES_DIR / _validate_profile_name(clone_from)
+        if not src_dir.is_dir():
+            raise FileNotFoundError(f"Source profile '{clone_from}' not found")
+        for fname in _PROFILE_FILE_NAMES:
+            src = src_dir / fname
+            if src.exists():
+                shutil.copy2(src, target / fname)
+    return target
+
+
+def delete_profile(name: str) -> None:
+    """Delete a profile directory. Refuses to delete the active profile or the
+    last remaining profile.
+    """
+    name = _validate_profile_name(name)
+    target = PROFILES_DIR / name
+    if not target.is_dir():
+        raise FileNotFoundError(f"Profile '{name}' not found")
+    if name == get_active_profile_name():
+        raise ValueError(f"Cannot delete the active profile '{name}'. Switch first.")
+    if len(list_profiles()) <= 1:
+        raise ValueError("Cannot delete the only remaining profile.")
+    shutil.rmtree(target)
+
+
+def profile_files_status(name: str) -> dict[str, bool]:
+    """Return which profile files are present for the given profile."""
+    d = profile_dir(name)
+    return {fname: (d / fname).exists() for fname in _PROFILE_FILE_NAMES}
+
+
+def __getattr__(attr: str):
+    """Resolve per-profile path constants dynamically against the active profile."""
+    fname = _PROFILE_PATH_ATTRS.get(attr)
+    if fname is None:
+        raise AttributeError(f"module 'applypilot.config' has no attribute {attr!r}")
+    return profile_dir() / fname
 
 
 def load_profile() -> dict:
-    """Load user profile from ~/.applypilot/profile.json."""
+    """Load the active profile from ~/.applypilot/profiles/<active>/profile.json."""
     import json
-    if not PROFILE_PATH.exists():
+    p = profile_dir() / "profile.json"
+    if not p.exists():
         raise FileNotFoundError(
-            f"Profile not found at {PROFILE_PATH}. Run `applypilot init` first."
+            f"Profile not found at {p}. Run `applypilot init` first."
         )
-    return json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def load_search_config() -> dict:
-    """Load search configuration from ~/.applypilot/searches.yaml."""
+    """Load search configuration for the active profile, falling back to the example."""
     import yaml
-    if not SEARCH_CONFIG_PATH.exists():
+    p = profile_dir() / "searches.yaml"
+    if not p.exists():
         # Fall back to package-shipped example
         example = CONFIG_DIR / "searches.example.yaml"
         if example.exists():
             return yaml.safe_load(example.read_text(encoding="utf-8"))
         return {}
-    return yaml.safe_load(SEARCH_CONFIG_PATH.read_text(encoding="utf-8"))
+    return yaml.safe_load(p.read_text(encoding="utf-8"))
 
 
 def load_sites_config() -> dict:

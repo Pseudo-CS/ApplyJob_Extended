@@ -10,7 +10,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from applypilot.config import DB_PATH
+from applypilot import config
 
 # Thread-local connection storage — each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
@@ -29,7 +29,7 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     Returns:
         sqlite3.Connection configured with WAL mode and row factory.
     """
-    path = str(db_path or DB_PATH)
+    path = str(db_path or config.DB_PATH)
 
     if not hasattr(_local, 'connections'):
         _local.connections = {}
@@ -42,17 +42,61 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
         except sqlite3.ProgrammingError:
             pass
 
+    # Ensure parent directory exists before connecting
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
     conn = sqlite3.connect(path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
     conn.row_factory = sqlite3.Row
+
+    # Self-healing: auto-create the jobs table and columns if it doesn't exist
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
+    if not cursor.fetchone():
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                url                   TEXT PRIMARY KEY,
+                title                 TEXT,
+                salary                TEXT,
+                description           TEXT,
+                location              TEXT,
+                site                  TEXT,
+                strategy              TEXT,
+                discovered_at         TEXT,
+                full_description      TEXT,
+                application_url       TEXT,
+                detail_scraped_at     TEXT,
+                detail_error          TEXT,
+                fit_score             INTEGER,
+                score_reasoning       TEXT,
+                scored_at             TEXT,
+                tailored_resume_path  TEXT,
+                tailored_at           TEXT,
+                tailor_attempts       INTEGER DEFAULT 0,
+                cover_letter_path     TEXT,
+                cover_letter_at       TEXT,
+                cover_attempts        INTEGER DEFAULT 0,
+                applied_at            TEXT,
+                apply_status          TEXT,
+                apply_error           TEXT,
+                apply_attempts        INTEGER DEFAULT 0,
+                agent_id              TEXT,
+                last_attempted_at     TEXT,
+                apply_duration_ms     INTEGER,
+                apply_task_id         TEXT,
+                verification_confidence TEXT
+            )
+        """)
+        conn.commit()
+        ensure_columns(conn)
+
     _local.connections[path] = conn
     return conn
 
 
 def close_connection(db_path: Path | str | None = None) -> None:
     """Close the cached connection for the current thread."""
-    path = str(db_path or DB_PATH)
+    path = str(db_path or config.DB_PATH)
     if hasattr(_local, 'connections'):
         conn = _local.connections.pop(path, None)
         if conn is not None:
@@ -81,7 +125,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     Returns:
         sqlite3.Connection with the schema initialized.
     """
-    path = db_path or DB_PATH
+    path = db_path or config.DB_PATH
 
     # Ensure parent directory exists
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -324,6 +368,29 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     return stats
+
+
+def url_exists(conn: sqlite3.Connection | None, url: str) -> bool:
+    """Return True if a job with this URL is already stored.
+
+    Useful as a pre-LLM dedup check (e.g., manual discovery mode) to avoid
+    wasting a scoring call on a job the pipeline has already processed.
+
+    Args:
+        conn: Database connection. Uses get_connection() if None.
+        url: Job URL to look up.
+
+    Returns:
+        True if the URL already has a row in the jobs table.
+    """
+    if not url:
+        return False
+    if conn is None:
+        conn = get_connection()
+    row = conn.execute(
+        "SELECT 1 FROM jobs WHERE url = ? LIMIT 1", (url,)
+    ).fetchone()
+    return row is not None
 
 
 def store_jobs(conn: sqlite3.Connection, jobs: list[dict],

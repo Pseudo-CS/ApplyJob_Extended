@@ -161,7 +161,8 @@ def apply(
     """Launch auto-apply to submit job applications."""
     _bootstrap()
 
-    from applypilot.config import check_tier, PROFILE_PATH as _profile_path
+    from applypilot import config as _config
+    from applypilot.config import check_tier
     from applypilot.database import get_connection
 
     # --- Utility modes (no Chrome/Claude needed) ---
@@ -190,7 +191,7 @@ def apply(
     check_tier(3, "auto-apply")
 
     # Check 2: Profile exists
-    if not _profile_path.exists():
+    if not _config.PROFILE_PATH.exists():
         console.print(
             "[red]Profile not found.[/red]\n"
             "Run [bold]applypilot init[/bold] to create your profile first."
@@ -220,7 +221,7 @@ def apply(
         if not prompt_file:
             console.print("[red]No matching job found for that URL.[/red]")
             raise typer.Exit(code=1)
-        mcp_path = _profile_path.parent / ".mcp-apply-0.json"
+        mcp_path = _config.APP_DIR / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
         console.print(f"\n[bold]Run manually:[/bold]")
         console.print(
@@ -323,23 +324,54 @@ def status() -> None:
 
 
 @app.command()
-def dashboard() -> None:
-    """Generate and open the HTML dashboard in your browser."""
+def dashboard(
+    port: int = typer.Option(8089, "--port", "-p", help="Port for the dashboard server."),
+    no_open: bool = typer.Option(False, "--no-open", help="Do not auto-open the browser."),
+) -> None:
+    """Run the dashboard HTTP server and open it in your browser."""
     _bootstrap()
 
-    from applypilot.view import open_dashboard
+    from applypilot.view import serve_dashboard
 
-    open_dashboard()
+    serve_dashboard(port=port, open_browser=not no_open)
+
+
+@app.command()
+def manual(
+    count: int = typer.Option(10, "--count", "-n", help="Number of high-fit jobs to collect."),
+    min_score: int = typer.Option(8, "--min-score", "-s", help="Minimum fit score to keep (1-10)."),
+    max_evaluated: int = typer.Option(0, "--max-evaluated", help="Hard cap on LLM scoring calls (0 = no cap)."),
+) -> None:
+    """Score-then-store discovery: iterate jobs, keep only the top fits.
+
+    For each candidate the loop dedups against the DB, scores the description
+    with the LLM, and stores it only if the fit score meets --min-score.
+    Iteration stops once --count jobs have been collected or the job source
+    is exhausted.
+    """
+    _bootstrap()
+
+    from applypilot.config import check_tier
+    check_tier(2, "manual scored discovery")
+
+    from applypilot.discovery.manual import run_manual_discovery
+
+    result = run_manual_discovery(
+        target_count=count,
+        min_score=min_score,
+        max_evaluated=max_evaluated,
+    )
+
+    if result["collected"] == 0:
+        raise typer.Exit(code=1)
 
 
 @app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil
-    from applypilot.config import (
-        load_env, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
-        SEARCH_CONFIG_PATH, ENV_PATH, get_chrome_path,
-    )
+    from applypilot import config as _cfg
+    from applypilot.config import load_env, ENV_PATH, get_chrome_path
 
     load_env()
 
@@ -350,23 +382,23 @@ def doctor() -> None:
     results: list[tuple[str, str, str]] = []  # (check, status, note)
 
     # --- Tier 1 checks ---
-    # Profile
-    if PROFILE_PATH.exists():
-        results.append(("profile.json", ok_mark, str(PROFILE_PATH)))
+    # Profile (resolved against active profile)
+    if _cfg.PROFILE_PATH.exists():
+        results.append(("profile.json", ok_mark, str(_cfg.PROFILE_PATH)))
     else:
         results.append(("profile.json", fail_mark, "Run 'applypilot init' to create"))
 
     # Resume
-    if RESUME_PATH.exists():
-        results.append(("resume.txt", ok_mark, str(RESUME_PATH)))
-    elif RESUME_PDF_PATH.exists():
+    if _cfg.RESUME_PATH.exists():
+        results.append(("resume.txt", ok_mark, str(_cfg.RESUME_PATH)))
+    elif _cfg.RESUME_PDF_PATH.exists():
         results.append(("resume.txt", warn_mark, "Only PDF found — plain-text needed for AI stages"))
     else:
         results.append(("resume.txt", fail_mark, "Run 'applypilot init' to add your resume"))
 
     # Search config
-    if SEARCH_CONFIG_PATH.exists():
-        results.append(("searches.yaml", ok_mark, str(SEARCH_CONFIG_PATH)))
+    if _cfg.SEARCH_CONFIG_PATH.exists():
+        results.append(("searches.yaml", ok_mark, str(_cfg.SEARCH_CONFIG_PATH)))
     else:
         results.append(("searches.yaml", warn_mark, "Will use example config — run 'applypilot init'"))
 
@@ -451,6 +483,168 @@ def doctor() -> None:
         console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
 
     console.print()
+
+
+@app.command()
+def browser(
+    port: int = typer.Option(9222, "--port", "-p", help="CDP port to open remote debugging on.")
+) -> None:
+    """Launch a Chrome instance with remote debugging enabled for manual navigation."""
+    from applypilot.apply.chrome import launch_chrome
+    from applypilot.apply.fill import start_fill_server
+    import time
+    
+    proc = launch_chrome(worker_id=0, port=port, headless=False)
+    server = start_fill_server(8088)
+    
+    console.print(f"[green]Chrome started on port {port}.[/green]")
+    console.print("[green]Started local trigger server on http://localhost:8088[/green]")
+    console.print("[bold yellow]Click your 'AI Fill' bookmark in Chrome to trigger Qwen filling anytime![/bold yellow]")
+    console.print("[green]Press Ctrl+C to close it.[/green]")
+    try:
+        while proc.poll() is None:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\nClosing browser and trigger server...")
+        server.shutdown()
+        from applypilot.apply.chrome import cleanup_worker
+        cleanup_worker(worker_id=0, process=proc)
+
+
+@app.command()
+def fill(
+    port: int = typer.Option(9222, "--port", "-p", help="CDP port of the active Chrome browser.")
+) -> None:
+    """Semi-autonomously fill out form fields on the active browser tab using local LLM."""
+    from applypilot.apply.fill import run_fill
+    run_fill(port=port)
+
+
+@app.command()
+def serve(
+    port: int = typer.Option(8088, "--port", "-p", help="Port to run the local API server on.")
+) -> None:
+    """Start the local AI fill API server for the Tampermonkey userscript."""
+    _bootstrap()
+    from applypilot.apply.fill import FillServerHandler
+    from http.server import HTTPServer
+    
+    server = HTTPServer(('localhost', port), FillServerHandler)
+    console.print(f"[bold green]ApplyPilot AI Fill Server running on http://localhost:{port}[/bold green]")
+    console.print("[yellow]Click the floating '⚡ AI Fill' button in your browser to fill forms.[/yellow]")
+    console.print("[dim]Press Ctrl+C to stop the server.[/dim]")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        console.print("\nStopping server...")
+        server.server_close()
+
+
+# ---------------------------------------------------------------------------
+# Profile sub-command group
+# ---------------------------------------------------------------------------
+
+profile_app = typer.Typer(help="Manage user profiles (no auth required).")
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("list")
+def profile_list() -> None:
+    """List all profiles and highlight the active one."""
+    from applypilot.config import list_profiles, get_active_profile_name, profile_files_status
+    active = get_active_profile_name()
+    profiles = list_profiles()
+    if not profiles:
+        console.print("[yellow]No profiles found. Run 'applypilot init' to create one.[/yellow]")
+        return
+    table = Table(title="Profiles", show_header=True, header_style="bold cyan")
+    table.add_column("Name", style="bold")
+    table.add_column("Active", justify="center")
+    table.add_column("profile.json", justify="center")
+    table.add_column("resume.txt", justify="center")
+    table.add_column("searches.yaml", justify="center")
+    table.add_column("Path")
+    from applypilot.config import profile_dir as _pdir
+    for name in profiles:
+        status = profile_files_status(name)
+        table.add_row(
+            name,
+            "[green]✓[/green]" if name == active else "",
+            "[green]✓[/green]" if status.get("profile.json") else "[red]✗[/red]",
+            "[green]✓[/green]" if status.get("resume.txt") else "[red]✗[/red]",
+            "[green]✓[/green]" if status.get("searches.yaml") else "[dim]–[/dim]",
+            str(_pdir(name)),
+        )
+    console.print(table)
+
+
+@profile_app.command("show")
+def profile_show() -> None:
+    """Show the active profile name and its file paths."""
+    from applypilot.config import get_active_profile_name, profile_dir, profile_files_status
+    name = get_active_profile_name()
+    d = profile_dir(name)
+    console.print(f"\n[bold]Active profile:[/bold] [green]{name}[/green]")
+    console.print(f"[dim]Directory:[/dim] {d}")
+    for fname, present in profile_files_status(name).items():
+        mark = "[green]✓[/green]" if present else "[red]✗ missing[/red]"
+        console.print(f"  {mark}  {d / fname}")
+    console.print()
+
+
+@profile_app.command("use")
+def profile_use(name: str = typer.Argument(..., help="Profile name to activate.")) -> None:
+    """Switch the active profile."""
+    from applypilot.config import set_active_profile
+    try:
+        set_active_profile(name)
+        console.print(f"[green]Switched to profile:[/green] {name}")
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+
+@profile_app.command("create")
+def profile_create(
+    name: str = typer.Argument(..., help="Name for the new profile."),
+    clone_from: str = typer.Option("", "--clone-from", "-c", help="Copy files from this existing profile."),
+    use: bool = typer.Option(False, "--use", "-u", help="Switch to the new profile after creating it."),
+) -> None:
+    """Create a new profile (optionally cloned from an existing one)."""
+    from applypilot.config import create_profile, set_active_profile, profile_dir
+    try:
+        create_profile(name, clone_from=clone_from or None)
+        console.print(f"[green]Created profile:[/green] {name}  →  {profile_dir(name)}")
+        if clone_from:
+            console.print(f"[dim]Files copied from '{clone_from}'.[/dim]")
+        if use:
+            set_active_profile(name)
+            console.print(f"[green]Switched to:[/green] {name}")
+        else:
+            console.print(f"[dim]Run 'applypilot profile use {name}' then 'applypilot init' to populate it.[/dim]")
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+
+@profile_app.command("delete")
+def profile_delete(
+    name: str = typer.Argument(..., help="Profile name to delete."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+) -> None:
+    """Delete a profile and all its files. Cannot delete the active profile."""
+    from applypilot.config import delete_profile, profile_dir
+    if not yes:
+        confirmed = typer.confirm(f"Delete profile '{name}' at {profile_dir(name)}? This cannot be undone.")
+        if not confirmed:
+            console.print("Aborted.")
+            return
+    try:
+        delete_profile(name)
+        console.print(f"[green]Deleted profile:[/green] {name}")
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
