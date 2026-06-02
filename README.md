@@ -22,9 +22,9 @@ ApplyPilot is a 6-stage autonomous job application agent:
 
 This fork introduces key features and bug fixes that solve major usability bottlenecks in the original codebase:
 
-### 🎨 Custom Aesthetic UI Elements (No More Native Popups)
-* **Custom Toast Notifications**: Native browser `alert()` popups have been replaced with non-blocking, beautifully animated custom Toast notifications. They are color-coded (Green for success, Red for errors, Blue for info) and automatically fade out.
-* **Custom Confirm Modals**: Browser `confirm()` prompts have been replaced with custom promise-based Confirm Modals styled directly into the dashboard theme, creating a premium web application experience.
+### 🌐 Web-Based Orchestration (Moving Away from CLI Only)
+* **Interactive Web Control**: Upgraded the experience from purely command-line execution (`applypilot run`) to interactive web control directly inside the dashboard UI.
+* **Integrated Interface Elements**: Native browser popups (`alert`/`confirm`) have been completely replaced with custom Toast notifications and asynchronous Modal dialogs styled directly into the theme. This lets you manage profiles, configure runs, and trigger discovery loops without touching the terminal.
 
 ### 👥 Safe Profile Deletion & Management
 * **Active Profile Protection**: Fixed a major bug in the original UI where deleting a profile was impossible because the active profile dropdown always selected the active profile (and clicking delete tried to delete the active profile, which the backend blocks).
