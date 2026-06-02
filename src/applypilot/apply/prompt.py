@@ -200,9 +200,9 @@ def _build_hard_rules(profile: dict) -> str:
     sponsorship = work_auth.get("require_sponsorship", "")
     permit_type = work_auth.get("work_permit_type", "")
 
-    work_auth_rule = "Work auth: Answer truthfully from profile."
+    work_auth_rule = f"Work auth: Authorized: {auth_info}. Sponsorship needed: {sponsorship}."
     if permit_type:
-        work_auth_rule = f"Work auth: {permit_type}. Sponsorship needed: {sponsorship}."
+        work_auth_rule = f"Work auth: Authorized: {auth_info}. Sponsorship needed: {sponsorship}. Permit type: {permit_type}."
 
     name_rule = f'Name: Legal name = {full_name}.'
     if preferred_name and preferred_name != full_name.split()[0]:

@@ -196,7 +196,7 @@ class LLMClient:
         # reasoning, saving tokens on structured extraction tasks.
         if "qwen" in self.model.lower() and messages:
             first = messages[0]
-            if first.get("role") == "user" and not first["content"].startswith("/no_think"):
+            if first.get("role") in ("user", "system") and not first["content"].startswith("/no_think"):
                 messages = [{"role": first["role"], "content": f"/no_think\n{first['content']}"}] + messages[1:]
 
         for attempt in range(_MAX_RETRIES):
@@ -207,7 +207,7 @@ class LLMClient:
 
                 return self._chat_compat(messages, temperature, max_tokens)
 
-            except _GeminiCompatForbidden as exc:
+            except _GeminiCompatForbidden:
                 # Model not available on OpenAI-compat layer — switch to native.
                 log.warning(
                     "Gemini compat endpoint returned 403 for model '%s'. "

@@ -15,6 +15,7 @@ import logging
 import sqlite3
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
 from rich.console import Console
@@ -201,7 +202,6 @@ def generate_rejection_summary(conn: sqlite3.Connection, p_dir: Path) -> None:
     """Grab up to 10 random rejection reasons and summarize them using the LLM,
     saving the result to rejection_summary.txt in the profile directory.
     """
-    from pathlib import Path
     try:
         from applypilot.config import load_env
         load_env()

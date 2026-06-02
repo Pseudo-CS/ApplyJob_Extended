@@ -25,7 +25,6 @@ from pathlib import Path
 
 from rich.console import Console
 
-from applypilot import config as _cfg
 from applypilot.config import (
     APP_DIR,
     list_profiles,

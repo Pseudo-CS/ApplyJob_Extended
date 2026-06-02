@@ -12,7 +12,6 @@ import logging
 import threading
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import sync_playwright
 
